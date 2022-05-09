@@ -1,10 +1,10 @@
 use byteorder::{ByteOrder, NativeEndian};
-use windows::core::{Error as WinError, Result as WinResult};
+use windows::core::{Error as WinError, Result as WinResult, PCSTR};
 use windows::Win32::System::WindowsProgramming::{
     GetFirmwareEnvironmentVariableA, SetFirmwareEnvironmentVariableA,
 };
 
-use crate::constants::IntoPSTR;
+use crate::traits::IntoWinResult;
 
 pub struct EfiVar {
     data: Box<[u16]>,
@@ -12,6 +12,10 @@ pub struct EfiVar {
 
 impl From<EfiVar> for String {
     fn from(EfiVar { data }: EfiVar) -> Self {
+        #[cfg(debug_assertions)]
+        {
+            println!("{:?}", data);
+        }
         // SAFETY: all instances of EfiVars produced are ones read from the system firmware, which
         // should always contain valid string values if we are expecting string values.
         String::from_utf16(&*data).unwrap()
@@ -21,10 +25,11 @@ impl From<EfiVar> for String {
 impl From<EfiVar> for u64 {
     fn from(EfiVar { data }: EfiVar) -> Self {
         assert!(data.len() >= 4);
+        // Assume little endian. I have no idea if this is true or not lol
         let a: u64 = data[0].into();
         let b: u64 = data[1].into();
         let c: u64 = data[2].into();
-        let d: u64 = data[4].into();
+        let d: u64 = data[3].into();
 
         a + (b << 16) + (c << 32) + (d << 48)
     }
@@ -34,7 +39,10 @@ impl From<String> for EfiVar {
     fn from(s: String) -> Self {
         // Strings are encoded as utf-8, which we need to re-encode as utf-16 before putting into a
         // box
-        let data = s.encode_utf16().collect::<Vec<u16>>().into_boxed_slice();
+        let mut data = s.encode_utf16().collect::<Vec<u16>>();
+        // Make sure to add the null terminator!
+        data.push(0);
+        let data = data.into_boxed_slice();
         EfiVar { data }
     }
 }
@@ -42,19 +50,15 @@ impl From<String> for EfiVar {
 /// Reads an EFI firmware variable. `var` is the name of the variable to read, `namespace` is the
 /// stringified UUID of the namespace to read from, and `buf_size` is the size of buffer to read
 /// the variable in to.
-pub fn read_efivar(
-    var: impl IntoPSTR,
-    namespace: impl IntoPSTR,
-    buf_size: usize,
-) -> WinResult<EfiVar> {
+pub fn read_efivar(var: PCSTR, namespace: PCSTR, buf_size: usize) -> WinResult<EfiVar> {
     assert!(buf_size % 2 == 0, "buf_size must be divisible by 2");
 
     let mut buf8: Vec<u8> = vec![0; buf_size];
     let bytes_read = unsafe {
         let buf_ptr = buf8.as_mut_ptr();
         GetFirmwareEnvironmentVariableA(
-            var.into_pstr(),
-            namespace.into_pstr(),
+            var,
+            namespace,
             buf_ptr as *mut _,
             buf_size.try_into().unwrap(),
         )
@@ -80,25 +84,16 @@ pub fn read_efivar(
 
 /// Writes an EFI variable. `var` is the name of the variable to write into `namespace`, and `val`
 /// is the value to write.
-pub fn write_efivar(
-    var: impl IntoPSTR,
-    namespace: impl IntoPSTR,
-    val: impl Into<EfiVar>,
-) -> WinResult<()> {
+pub fn write_efivar(var: PCSTR, namespace: PCSTR, val: impl Into<EfiVar>) -> WinResult<()> {
     let val: EfiVar = val.into();
-    let success = unsafe {
+    unsafe {
         SetFirmwareEnvironmentVariableA(
-            var.into_pstr(),
-            namespace.into_pstr(),
+            var,
+            namespace,
             val.data.as_ptr() as *const _,
             // multiply by 2 since data is [u16], 2 bytes per element
             (val.data.len() * 2).try_into().unwrap(),
         )
-    };
-
-    if success.as_bool() {
-        Ok(())
-    } else {
-        Err(WinError::from_win32())
     }
+    .into_win_result()
 }

@@ -1,14 +1,16 @@
 mod constants;
 mod efi_editor;
 mod privilege_elevator;
+mod traits;
 
-use clap::{AppSettings, ArgEnum, Parser, Subcommand};
+use clap::{ArgEnum, Parser, Subcommand};
+use std::ffi::CStr;
 use windows::core::Result as WinResult;
 
+use crate::traits::ToPCSTR;
+
 #[derive(Parser)]
-#[clap(author, version, about)]
-#[clap(global_setting(AppSettings::PropagateVersion))]
-#[clap(global_setting(AppSettings::UseLongFormatForHelpSubcommand))]
+#[clap(author, version, about, long_about = None, propagate_version = true)]
 struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -18,7 +20,7 @@ struct Cli {
 enum Commands {
     Get {
         #[clap(arg_enum)]
-        var: Vars
+        var: Vars,
     },
     Set {
         #[clap(arg_enum)]
@@ -34,50 +36,53 @@ enum Vars {
 }
 
 impl Vars {
-    fn to_var_str(self) -> &'static str {
+    fn to_var_str(self) -> &'static CStr {
         match self {
-            Vars::OneShot => constants::ONESHOT_VAR_NAME,
-            Vars::Default => constants::DEFAULT_VAR_NAME,
+            Vars::OneShot => &constants::ONESHOT_VAR_NAME,
+            Vars::Default => &constants::DEFAULT_VAR_NAME,
         }
     }
 }
 
-fn get(var: Vars) -> WinResult<()> { 
+fn get(var: Vars) -> WinResult<()> {
     let data = efi_editor::read_efivar(
-        var.to_var_str(),
-        constants::SYSTEMD_LOADER_VENDOR_GUID,
-        512,
+        var.to_var_str().to_pcstr(),
+        constants::SYSTEMD_LOADER_VENDOR_GUID.to_pcstr(),
+        1024,
     )?;
     let data = String::from(data);
 
-    println!("{} is currently set to: {}", var.to_var_str(), data);
+    println!(
+        "{} is currently set to: {}",
+        var.to_var_str().to_str().unwrap(),
+        data
+    );
 
     Ok(())
 }
 
-fn set(var: Vars, val: &str) -> WinResult<()> { 
+fn set(var: Vars, val: &str) -> WinResult<()> {
     efi_editor::write_efivar(
-        var.to_var_str(),
-        constants::SYSTEMD_LOADER_VENDOR_GUID,
+        var.to_var_str().to_pcstr(),
+        constants::SYSTEMD_LOADER_VENDOR_GUID.to_pcstr(),
         String::from(val),
     )?;
 
-    println!("Set {} to: {}", var.to_var_str(), val);
+    println!("Set {} to: {}", var.to_var_str().to_str().unwrap(), val);
 
     Ok(())
 }
-
 
 fn main() -> WinResult<()> {
     let cli = Cli::parse();
 
+    privilege_elevator::elevate_thread_to_system()?;
+
     match &cli.command {
         Commands::Get { var } => {
-            privilege_elevator::elevate_privileges()?;
             get(*var)?;
         }
         Commands::Set { var, val } => {
-            privilege_elevator::elevate_privileges()?;
             set(*var, val)?;
         }
     }
