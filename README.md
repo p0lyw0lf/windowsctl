@@ -1,14 +1,14 @@
-# windowsctl
+# wootctl
 A simple Rust CLI app to edit UEFI variables that systemd-boot uses
 
 ## Usage
 The usual for a cargo project, just `cargo run`. This will show the following help menu:
 
 ```
-windowsctl-reboot 0.1.0
+wootctl 0.1.1
 
 USAGE:
-    windowsctl-reboot.exe <SUBCOMMAND>
+    wootctl.exe <SUBCOMMAND>
 
 OPTIONS:
     -h, --help       Print help information
@@ -21,4 +21,4 @@ SUBCOMMANDS:
 ```
 
 ## Notes
-As the name is literally `windowsctl`, this project has a hard dependency on Windows and can only be run on that or compatible operating systems.
+This project has a hard dependency on Windows and can only be run on that platform, sorrz
